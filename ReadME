@@ -1,0 +1,40 @@
+# 📄 File Analyzer — FastAPI + OpenAI
+
+A simple file analysis backend built using **FastAPI** and **OpenAI**.  
+It accepts file uploads (TXT, CSV, PDF), extracts text, summarizes the content using OpenAI models, and returns a combined analysis.
+
+---
+
+## 🚀 Features
+
+- Upload files via `/analyze` endpoint  
+- Supports:
+  - `.txt`
+  - `.pdf`
+  - `.csv`
+  - `.xlsx`
+- Automatically extracts text (PDF → PyPDF2, CSV → pandas)
+- Splits large files into chunks (to avoid token limits)
+- Sends chunks to OpenAI for summarization
+- Combines everything into one final analysis response
+- Fully documented API via Swagger UI
+
+---
+
+## 🛠️ Tech Stack
+
+- **Python 3.10+**
+- **FastAPI**
+- **Uvicorn**
+- **OpenAI Responses API**
+- **PyPDF2**
+- **Pandas**
+
+---
+
+## 📦 Installation
+
+### 1. Clone this repo
+```bash
+git clone https://github.com/<your-username>/file-analyzer.git
+cd file-analyzer
