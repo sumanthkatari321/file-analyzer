@@ -1,0 +1,152 @@
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from typing import List
+import os, io
+
+# --------------------------
+# Utility Functions
+# --------------------------
+
+def read_text_bytes(content: bytes) -> str:
+    """Decode text safely from bytes."""
+    try:
+        return content.decode("utf-8")
+    except Exception:
+        return content.decode("latin-1", errors="ignore")
+
+
+def chunk_text(text: str, max_chars: int = 2500) -> List[str]:
+    """Split large text into manageable chunks for OpenAI."""
+    words = text.split()
+    chunks, current, length = [], [], 0
+
+    for w in words:
+        if length + len(w) + 1 > max_chars:
+            chunks.append(" ".join(current))
+            current = [w]
+            length = len(w) + 1
+        else:
+            current.append(w)
+            length += len(w) + 1
+
+    if current:
+        chunks.append(" ".join(current))
+
+    return chunks
+
+
+def extract_text_from_pdf_bytes(data: bytes) -> str:
+    """Extract text from PDF using PyPDF2."""
+    try:
+        from PyPDF2 import PdfReader
+    except ImportError:
+        raise RuntimeError("PyPDF2 is not installed. Run: pip install PyPDF2")
+
+    reader = PdfReader(io.BytesIO(data))
+    pages = []
+
+    for page in reader.pages:
+        pages.append(page.extract_text() or "")
+
+    return "\n".join(pages)
+
+
+# --------------------------
+# FastAPI Application
+# --------------------------
+
+app = FastAPI(title="File Analyzer")
+
+
+@app.get("/")
+def home():
+    return {"message": "File Analyzer is running successfully!"}
+
+
+@app.post("/analyze")
+async def analyze_file(file: UploadFile = File(...)):
+    """Main file analysis endpoint."""
+    
+    # Read uploaded file
+    content_bytes = await file.read()
+    filename = (file.filename or "").lower()
+
+    # --------------------------
+    # Extract text based on file type
+    # --------------------------
+    try:
+        if filename.endswith(".pdf"):
+            text = extract_text_from_pdf_bytes(content_bytes)
+
+        elif filename.endswith(".csv") or filename.endswith(".xlsx"):
+            import pandas as pd
+            try:
+                df = pd.read_csv(io.BytesIO(content_bytes))
+                text = df.head(50).to_csv(index=False)
+            except Exception:
+                text = read_text_bytes(content_bytes)
+
+        else:
+            # Assume plain text / logs / JSON etc.
+            text = read_text_bytes(content_bytes)
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not extract text: {e}")
+
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="No readable text found in file.")
+
+    # --------------------------
+    # Chunking before sending to OpenAI
+    # --------------------------
+    chunks = chunk_text(text)
+
+    # --------------------------
+    # Load OpenAI API key (must be set in environment)
+    # --------------------------
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set in environment.")
+
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+
+    # --------------------------
+    # Process each chunk using OpenAI
+    # --------------------------
+    summaries = []
+
+    try:
+        for chunk in chunks:
+            prompt = (
+                "Summarize the following text in 3–6 bullet points. "
+                "Return a clean and concise summary.\n\n"
+                f"{chunk}"
+            )
+
+            response = client.responses.create(
+                model="gpt-4o-mini",
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt}
+                        ]
+                    }
+                ]
+            )
+
+            output_text = getattr(response, "output_text", None) or str(response)
+            summaries.append(output_text.strip())
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI API Error: {e}")
+
+    # --------------------------
+    # Combine all summaries
+    # --------------------------
+    final_summary = "\n\n---\n\n".join(summaries)
+
+    return {
+        "filename": file.filename,
+        "analysis": final_summary
+    }
